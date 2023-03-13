@@ -17,6 +17,11 @@ class Worker:
     """A class representing a Worker node in a MapReduce cluster."""
     def __init__(self, host, port, manager_host, manager_port):
         """Construct a Worker instance and start listening for messages."""
+        self.host = host
+        self.port = port
+        self.manager_host = manager_host
+        self.manager_port = manager_port
+
         LOGGER.info(
             "Starting worker host=%s port=%s pwd=%s",
             host, port, os.getcwd(),
@@ -36,12 +41,16 @@ class Worker:
 
         # Open TCP Socket
         signals = {"shutdown": False}
-        thread = threading.Thread(target=self.server, args=(host, port, manager_host, manager_port, signals))
+        thread = threading.Thread(target=self.server, args=(signals,))
         thread.start()
+        
+        # Send the registration message
+        self.register()
+
         thread.join()  # Wait for server thread to shut down
         print("main() shutting down")
 
-    def server(self, host, port, manager_host, manager_port, signals):
+    def server(self, signals):
         """Wait on a message from a socket OR a shutdown signal."""
         print("server() starting")
 
@@ -50,7 +59,7 @@ class Worker:
 
             # Bind the socket to the server
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind((host, port))
+            sock.bind((self.host, self.port))
             sock.listen()
 
             # Socket accept() will block for a maximum of 1 second.  If you
@@ -58,7 +67,6 @@ class Worker:
             sock.settimeout(1)
 
             while not signals["shutdown"]:
-                print("waiting for connection...")
 
                 # Wait for a connection for 1s.  The socket library avoids
                 # consuming CPU while waiting for a connection.
@@ -96,6 +104,18 @@ class Worker:
                 if message_dict["message_type"] == "shutdown":
                     signals["shutdown"] = True
         print("server() shutting down")
+    
+    def register(self):
+        """Send the registration message to manager"""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            # connect to the server
+            sock.connect((self.manager_host, self.manager_port))
+
+            # send a message
+            message = json.dumps({"message_type" : "register",
+                                  "worker_host" : self.host,
+                                  "worker_port" : self.port,})
+            sock.sendall(message.encode('utf-8'))
         
 
 

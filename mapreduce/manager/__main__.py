@@ -4,7 +4,9 @@ import tempfile
 import logging
 import json
 import time
+import copy
 import socket
+import pathlib
 import threading
 import click
 import mapreduce.utils
@@ -29,7 +31,7 @@ class Manager:
         self.host = host
         self.port = port
         # List storing all of the worker objects
-        workers = []
+        self.workers = []
 
         # queue object storing jobs
         self.job_queue = queue.Queue()
@@ -48,23 +50,31 @@ class Manager:
         }
         LOGGER.debug("TCP recv\n%s", json.dumps(message_dict, indent=2))
 
-        # Set up threads
         signals = {"shutdown": False}
+        # Set up threads
         threads = []
-        thread = threading.Thread(target=self.heartbeat, args=(signals,))
-        threads.append(thread)
+        heartbeat_thread = threading.Thread(target=self.heartbeat, args=(signals,))
+        threads.append(heartbeat_thread)
         # Add in the fault tolerance thread when we need that to be used
-        thread.start()
+        job_thread = threading.Thread(target=self.execute_job, args=(signals,))
+        threads.append(job_thread)
+
+        # start the threads
+        for t in threads:
+            t.start()
 
         # Open the TCP Thread
-        self.message_handler(signals, workers)
-        
+        self.message_handler(signals)
         signals['shutdown'] = True
-        thread.join()
+
+        # close all threads
+        for t in threads:
+            t.join()
         print("main() shutting down")
 
     def heartbeat(self, signals):
         """Thread to handle UDP heartbeat messages."""
+        print("Starting heartbeat")
         while not signals['shutdown']:
             print("Listening for heartbeat ...")
             time.sleep(2)
@@ -73,7 +83,7 @@ class Manager:
         """Thread to handle fault tolerance."""
         # TODO
     
-    def message_handler(self, signals, workers):
+    def message_handler(self, signals):
         """Handle the main TCP port and different messages."""
         # Create an INET, STREAMing socket, this is TCP
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -81,6 +91,7 @@ class Manager:
             # Bind the socket to the server
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind((self.host, self.port))
+            print("listening on port ", self.port)
             sock.listen()
     
             # Socket accept() will block for a maximum of 1 second.  If you
@@ -131,7 +142,7 @@ class Manager:
                 # SHUTDOWN 
                 if message_dict["message_type"] == "shutdown":
                     # Send Shutdown message to all workers
-                    for worker in workers:
+                    for worker in self.workers:
                         message = json.dumps({"message_type": "shutdown"})
                         self.send_msg(message, worker.host, worker.port)
                     break
@@ -142,7 +153,8 @@ class Manager:
                     worker_host = message_dict['worker_host']
                     worker_port = message_dict['worker_port']
                     worker = Worker(worker_host, worker_port, 'ready')
-                    workers.append(worker)
+                    self.workers.append(worker)
+                    print("new worker registered\n", self.workers)
 
                     # sent ack message
                     message = json.dumps({"message_type": "register_ack",
@@ -160,8 +172,9 @@ class Manager:
                     job_details["reducer_executable"] = message_dict["reducer_executable"]
                     job_details["num_mappers"] = message_dict["num_mappers"]
                     job_details["num_reducers"] = message_dict["num_reducers"]
-                    job_details["job_id"] = self.job_id
+                    job_details["job_id"] = copy.deepcopy(self.job_id)
                     self.job_id += 1
+                    print("jobid = ", job_details['job_id'])
 
                     # add the job to the queue
                     self.job_queue.put(job_details)
@@ -176,7 +189,35 @@ class Manager:
             # send a message
             sock.sendall(message.encode('utf-8'))
 
-        
+    def execute_job(self, signals):
+        """Execute jobs when they are on the queue."""
+        print("Starting job execution")
+        while not signals["shutdown"]:
+            # Run a job if the job queue is empty
+            if not self.job_queue.empty():
+                job = self.job_queue.get()
+                print("executing job id ", {job['job_id']}, "\n")
+
+                # First, Delete output directory if it exists.
+                if pathlib.Path(job['output_directory']).exists():
+                    pathlib.Path(job['output_directory']).rmdir()
+
+                # Create output directory.
+                pathlib.Path(job['output_directory']).mkdir(parents=True, exist_ok=False)
+
+                # Shared temp directory
+                prefix = f"mapreduce-shared-job{job['job_id']:05d}-"
+                with tempfile.TemporaryDirectory(prefix=prefix) as tmpdir:
+                    LOGGER.info("Created tmpdir %s", tmpdir)
+                    # FIXME: Change this loop so that it runs either until shutdown 
+                    # or when the job is completed.
+                    complete = False
+                    while not complete and not signals["shutdown"]:
+                        time.sleep(0.1)
+                LOGGER.info("Cleaned up tmpdir %s", tmpdir)
+            time.sleep(0.1) # To avoid busy-waiting
+
+
 
 
 @click.command()

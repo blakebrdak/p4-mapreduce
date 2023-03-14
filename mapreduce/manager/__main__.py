@@ -8,6 +8,7 @@ import socket
 import threading
 import click
 import mapreduce.utils
+import queue
 
 
 # Configure logging
@@ -29,6 +30,10 @@ class Manager:
         self.port = port
         # List storing all of the worker objects
         workers = []
+
+        # queue object storing jobs
+        job_queue = queue.Queue()
+        self.job_id = 0
 
         LOGGER.info(
             "Starting manager host=%s port=%s pwd=%s",
@@ -52,7 +57,7 @@ class Manager:
         thread.start()
 
         # Open the TCP Thread
-        self.message_handler(signals, workers)
+        self.message_handler(signals, workers, job_queue)
         
         signals['shutdown'] = True
         thread.join()
@@ -68,7 +73,7 @@ class Manager:
         """Thread to handle fault tolerance."""
         # TODO
     
-    def message_handler(self, signals, workers):
+    def message_handler(self, signals, workers, job_queue):
         """Handle the main TCP port and different messages."""
         # Create an INET, STREAMing socket, this is TCP
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -144,6 +149,22 @@ class Manager:
                                           "worker_host": worker_host,
                                           "worker_port": worker_port,})
                     self.send_msg(message, worker_host, worker_port)
+
+                # NEW JOB REQUEST
+                if message_dict["message_type"] == "new_manager_job":
+                    # create a job and get the details from the message
+                    job_details = {}
+                    job_details["input_directory"] = message_dict["input_directory"]
+                    job_details["output_directory"] = message_dict["output_directory"]
+                    job_details["mapper_executable"] = message_dict["mapper_executable"]
+                    job_details["reducer_executable"] = message_dict["reducer_executable"]
+                    job_details["num_mappers"] = message_dict["num_mappers"]
+                    job_details["num_reducers"] = message_dict["num_reducers"]
+                    job_details["job_id"] = self.job_id
+                    self.job_id += 1
+
+                    # add the job to the queue
+                    job_queue.put(job_details)
                 
         print("TCP message handler shutting down")
 

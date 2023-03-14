@@ -21,6 +21,7 @@ class Worker:
         self.port = port
         self.manager_host = manager_host
         self.manager_port = manager_port
+        self.threads = []
 
         LOGGER.info(
             "Starting worker host=%s port=%s pwd=%s",
@@ -42,12 +43,14 @@ class Worker:
         # Open TCP Socket
         signals = {"shutdown": False}
         thread = threading.Thread(target=self.server, args=(signals,))
+        self.threads.append(thread)
         thread.start()
         
         # Send the registration message
         self.register()
 
-        thread.join()  # Wait for server thread to shut down
+        for t in self.threads:
+            t.join()  # Wait for server thread to shut down
         print("main() shutting down")
 
     def server(self, signals):
@@ -103,6 +106,11 @@ class Worker:
                 # Different handlings based on message
                 if message_dict["message_type"] == "shutdown":
                     signals["shutdown"] = True
+                if message_dict["message_type"] == "register_ack":
+                    thread = threading.Thread(target=self.heartbeat, args=(signals,))
+                    self.threads.append(thread)
+                    thread.start()
+
         print("server() shutting down")
     
     def register(self):
@@ -116,6 +124,13 @@ class Worker:
                                   "worker_host" : self.host,
                                   "worker_port" : self.port,})
             sock.sendall(message.encode('utf-8'))
+
+    def heartbeat(self, signals):
+        """Thread to handle UDP heartbeat messages."""
+        print("Starting heartbeat")
+        while not signals['shutdown']:
+            LOGGER.debug("Heartbeat")
+            time.sleep(2)
         
 
 

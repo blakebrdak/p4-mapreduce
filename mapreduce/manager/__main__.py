@@ -6,6 +6,7 @@ import json
 import time
 import copy
 import socket
+import shutil
 import pathlib
 import threading
 import click
@@ -76,7 +77,8 @@ class Manager:
         """Thread to handle UDP heartbeat messages."""
         print("Starting heartbeat")
         while not signals['shutdown']:
-            print("Listening for heartbeat ...")
+            # How often to check for heartbeat messages?
+            LOGGER.debug("Listening for heartbeat.")
             time.sleep(2)
 
     def fault_tolerance(self):
@@ -199,26 +201,55 @@ class Manager:
                 print("executing job id ", {job['job_id']}, "\n")
 
                 # First, Delete output directory if it exists.
-                if pathlib.Path(job['output_directory']).exists():
-                    pathlib.Path(job['output_directory']).rmdir()
+                output_path = pathlib.Path(job['output_directory'])
+                if output_path.exists():
+                    shutil.rmtree(output_path)
 
                 # Create output directory.
-                pathlib.Path(job['output_directory']).mkdir(parents=True, exist_ok=False)
+                output_path.mkdir(parents=True, exist_ok=False)
 
                 # Shared temp directory
                 prefix = f"mapreduce-shared-job{job['job_id']:05d}-"
                 with tempfile.TemporaryDirectory(prefix=prefix) as tmpdir:
                     LOGGER.info("Created tmpdir %s", tmpdir)
-                    # FIXME: Change this loop so that it runs either until shutdown 
-                    # or when the job is completed.
                     complete = False
                     while not complete and not signals["shutdown"]:
+                        # Partition input filenames and return partitioned list
+                        input_path = pathlib.Path(job['input_directory'])
+                        files = []
+                        for file in input_path.iterdir():
+                            files.append(file.name)
+
+                        # Generate the list of partitioned inputs (paths)
+                        partitioned_input = self.partition_input(files, job['num_reducers'])
+                        print(partitioned_input)
+                        
+                        # Allocate tasks to workers, task_id is the index in the list of tasks
+                        
+
+                        # TASK SHOULD BE FULLY COMPLETE WHEN WE REACH HERE
+                        complete = True
                         time.sleep(0.1)
+
                 LOGGER.info("Cleaned up tmpdir %s", tmpdir)
             time.sleep(0.1) # To avoid busy-waiting
 
-
-
+    def partition_input(self, input, num_partitions):
+        """Partitions the input, returns list of lists of paths."""
+        print("hey")
+        # Order inputs alphabetically
+        sorted_input = sorted(input)
+        output = []
+        i = 0
+        while i < num_partitions:
+            temp = []
+            add_idx = i
+            while add_idx < len(sorted_input):
+                temp.append(sorted_input[add_idx])
+                add_idx = add_idx + num_partitions
+            output.append(temp)
+            i = i + 1
+        return output
 
 @click.command()
 @click.option("--host", "host", default="localhost")

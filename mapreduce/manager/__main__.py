@@ -32,7 +32,7 @@ class Manager:
         workers = []
 
         # queue object storing jobs
-        job_queue = queue.Queue()
+        self.job_queue = queue.Queue()
         self.job_id = 0
 
         LOGGER.info(
@@ -57,7 +57,7 @@ class Manager:
         thread.start()
 
         # Open the TCP Thread
-        self.message_handler(signals, workers, job_queue)
+        self.message_handler(signals, workers)
         
         signals['shutdown'] = True
         thread.join()
@@ -73,7 +73,7 @@ class Manager:
         """Thread to handle fault tolerance."""
         # TODO
     
-    def message_handler(self, signals, workers, job_queue):
+    def message_handler(self, signals, workers):
         """Handle the main TCP port and different messages."""
         # Create an INET, STREAMing socket, this is TCP
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -164,7 +164,7 @@ class Manager:
                     self.job_id += 1
 
                     # add the job to the queue
-                    job_queue.put(job_details)
+                    self.job_queue.put(job_details)
                 
         print("TCP message handler shutting down")
 
